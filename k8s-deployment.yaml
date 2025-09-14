@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: streamlit-app
+  labels:
+    app: streamlit
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: streamlit
+  template:
+    metadata:
+      labels:
+        app: streamlit #what name you keep try to keep the same below also
+    spec:
+      containers:
+        - name: streamlit-container
+          image: streamlit-app:latest #what ever docker name is set in vm container,set same here also
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8501 #same port number where docker file is running 8501
+          envFrom:
+            - secretRef:
+                name: llmops-secrets #we will take the api key and inject it in the api cluster,and inside that injection we will name that injection as llmops-secrets
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: streamlit-service
+spec:
+  type: LoadBalancer
+  selector:
+    app: streamlit
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8501
