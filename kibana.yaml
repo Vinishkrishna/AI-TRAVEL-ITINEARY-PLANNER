@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kibana
+  namespace: logging
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kibana
+  template:
+    metadata:
+      labels:
+        app: kibana
+    spec:
+      containers:
+        - name: kibana
+          image: docker.elastic.co/kibana/kibana:7.17.0
+          env: #changing some of the values of the default configuration
+            - name: ELASTICSEARCH_HOSTS
+              value: http://elasticsearch:9200 #telling where to fetch the indexes
+          ports:
+            - containerPort: 5601 #Port where kibana will be running
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kibana
+  namespace: logging
+spec:
+  type: NodePort
+  selector:
+    app: kibana
+  ports:
+    - port: 5601
+      nodePort: 30601 #it is the port which you can access via node IP(it will not be used but good to give)

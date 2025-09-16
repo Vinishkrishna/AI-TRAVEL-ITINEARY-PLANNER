@@ -1,0 +1,67 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: elasticsearch-pvc #indexes are stored in pvc here
+  namespace: logging
+spec:
+  accessModes:
+    - ReadWriteOnce #basically you will allow one pod to read or write at a time
+  resources:
+    requests:
+      storage: 2Gi #giving 2 gi of storage to the cluster(slightly bigger than 2gb)
+  storageClassName: standard #using default storage class given by the minikube only
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elasticsearch
+  namespace: logging
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: elasticsearch
+  template:
+    metadata:
+      labels:
+        app: elasticsearch
+    spec:
+      containers:
+        - name: elasticsearch
+          image: docker.elastic.co/elasticsearch/elasticsearch:7.17.0 #this particular docker image is used to install the elastic search
+          env:
+            - name: discovery.type
+              value: single-node #we are telling our elastic search to run in single node mode(as testing/development purpose so single node)
+            - name: ES_JAVA_OPTS
+              value: "-Xms512m -Xmx512m" #512 MB and maximum also 512MB,Xms-minimum & Xmx-maximum,we are setting memory allocation to java virtual machine
+            - name: xpack.security.enabled
+              value: "false" #we are disabling the built-in security(so that u don't have to write the username & password),when doing for company set it to true
+          ports:
+            - containerPort: 9200 #port on which elastic search will be running
+          resources:
+            limits: #expand up to 2gb and 1gb of memory 
+              memory: "2Gi"
+              cpu: "1"
+            requests: #it is starting point,that we will getting 1gb of memeory and 500m of cpu
+              memory: "1Gi"
+              cpu: "500m"
+          volumeMounts: #we are creating a volume for our elastic storage where we can store our indexes
+            - mountPath: /usr/share/elasticsearch/data
+              name: elasticsearch-storage
+      volumes:  #and then we are mounting for elastic storage 
+        - name: elasticsearch-storage
+          persistentVolumeClaim:
+            claimName: elasticsearch-pvc #connecting persisiant volume claim with above volume mount,so pvc is stored inside elastic storage
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticsearch 
+  namespace: logging
+spec:
+  selector:
+    app: elasticsearch #it is application on which the service will be working,the service is connected to deployment
+  ports:
+    - protocol: TCP
+      port: 9200
+      targetPort: 9200

@@ -1,0 +1,67 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: logstash-config
+  namespace: logging
+data: #this is the custom configuration data that we want to replace with default configuration
+  logstash.conf: | #5044 means our logstash will run on 5044 port,logstash is accepting the input into this port from filebeat,filters can be used to modify or clean the logs,logs are sent to 9200 port for elastic search,index is a way in which it will store the output(that's how our index will get created ;example of index:-filebeat-2025-07-04)
+    input {
+      beats {
+        port => 5044 
+      }
+    }
+    filter {
+      
+    }
+    output {
+      elasticsearch {
+        hosts => ["http://elasticsearch.logging.svc.cluster.local:9200"]
+        index => "filebeat-%{+YYYY.MM.dd}"
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: logstash
+  namespace: logging
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: logstash
+  template:
+    metadata:
+      labels:
+        app: logstash
+    spec:
+      containers:
+      - name: logstash
+        image: docker.elastic.co/logstash/logstash:7.17.0 #dockerhub id to install logstash
+        ports:
+        - containerPort: 5044
+        - containerPort: 9600
+        volumeMounts: #inside this volume it will contain the data of our logstash config inside mountPath directory,this custom configuration will act as custom configuration for this image,as soon as logstash is installed it will replace the default configuration with custom configuration
+        - name: config-volume
+          mountPath: /usr/share/logstash/pipeline/logstash.conf
+          subPath: logstash.conf
+      volumes:
+      - name: config-volume
+        configMap:
+          name: logstash-config
+          items:
+          - key: logstash.conf
+            path: logstash.conf
+---
+apiVersion: v1
+kind: Service #for deployment we need a service to expose those deployment
+metadata:
+  name: logstash #make sure to keep same name as here in 1
+  namespace: logging
+spec:
+  selector:
+    app: logstash #1
+  ports:
+    - protocol: TCP
+      port: 5044
+      targetPort: 5044

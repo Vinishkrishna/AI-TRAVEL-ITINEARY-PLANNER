@@ -1,0 +1,222 @@
+---
+apiVersion: v1 #Basically it is telling your kubernetes that which api version this particular resource belongs,we are using api version 1(which means it's a basic resource i.e deployment,service,configmap)
+kind: ConfigMap #used to store non sensitive text data
+metadata: #like idcsrd
+  name: filebeat-config
+  namespace: logging
+  labels:
+    k8s-app: filebeat
+data: #the below is the data stored in the configuration file,here default configuration is overridded with custom configuration
+  filebeat.yml: |- #filebeat.input ,we will define all the resources from where you have to read the logs,in output we will define all the resources where we have to send the logs,paths is the place where all logs you read from each of the cluster is stored,inside the directory you will have .log files,it will search for .log files and send them to logstash later,processors(making logs more advanced and enriching) work is to add more details to a log(like adding node name from where the particular name was collected,adding pod name,add namespace),cloud_metadata will contain all the information regarding your cloud i.e instance name,which region.Host metadata is the details like when your create your vm i.e the host machine,what os it is using linux,ubuntu etc,with what name your vm has been created
+    filebeat.inputs: 
+    - type: container
+      paths:
+        - /var/log/containers/*.log 
+      processors:
+        - add_kubernetes_metadata:
+            host: ${NODE_NAME}
+            matchers:
+            - logs_path:
+                logs_path: "/var/log/containers/"
+    processors:
+      - add_cloud_metadata:
+      - add_host_metadata:
+    output.logstash:
+      hosts: ["logstash.logging.svc.cluster.local:5044"]
+#hosts: ["logstash.logging.svc.cluster.local:5044"] ,ip address where logstash is running,so send our logs to that particular port where logstash is running
+#daemon set allows you to run filebeat on every node,it's a basic thing so used as api version 1
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: filebeat
+  namespace: logging
+  labels:
+    k8s-app: filebeat
+spec: #what type of apps will be controlled by the daemon set(filebeat pods only)
+  selector:
+    matchLabels: #it is used to search for that particular pod
+      k8s-app: filebeat #select all the pods with filebeat label
+  template: #any pod created will automatically have this particular information,suppose you have five nodes(you have created a premade template),what premade template will do is when you create a filebeat pod at each node,it will fill that pod with these details
+    metadata:
+      labels:
+        k8s-app: filebeat
+    spec: #below is pod specification
+      serviceAccountName: filebeat #filebeat pods will use this filebeat service account(created later in this video)
+      terminationGracePeriodSeconds: 30 #if any of our pods stop ,kubernatives will wait for 30 seconds before forcefully killing it.
+      hostNetwork: true #all the pods of the filebeat will share the node network stack,the filebeat pod inside a node will have the same ip as the node
+      dnsPolicy: ClusterFirstWithHostNet #it means pod and node ip will be same,above and this line are inter-related.
+      containers:
+      - name: filebeat
+        image: docker.elastic.co/beats/filebeat:7.17.28 #filebeat is installed from this docker image(so your filebeat will fetch that docker image and install that docker image from the internet )
+        args: [
+          "-c", "/etc/filebeat.yml", #custom configuration will be found at this particular path
+          "-e", #sending your log output to your console
+        ]
+        env:
+        - name: NODE_NAME #set node name as a dynamic variable(if pod is running on say node 2 will change it's name to node 2)
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        securityContext:
+          runAsUser: 0 # we are running our pod as a root user
+          # If using Red Hat OpenShift uncomment this:
+          #privileged: true
+        resources:
+          limits:
+            memory: 200Mi #maximum memory allowed
+          requests: #minimum memory allowed.the below are starting limit
+            cpu: 100m
+            memory: 100Mi
+        volumeMounts: 
+        - name: config
+          mountPath: /etc/filebeat.yml # we are mounting a filebeat.yaml from configmap,and we are storing the configmap in the form of this,first it will deal with custom configurations
+          readOnly: true #so that no one can do modification to the config file
+          subPath: filebeat.yml
+        - name: data
+          mountPath: /usr/share/filebeat/data #directory where filebeat will store registry data,itwill keep the track of the logs that are already beign send(so that it is not send twice)
+        - name: varlibdockercontainers
+          mountPath: /var/lib/docker/containers #directory used to mount dockercontainer logs,help you to extract logs from each container
+          readOnly: true
+        - name: varlog
+          mountPath: /var/log #used to extract general system logs
+          readOnly: true
+      volumes:
+      - name: config
+        configMap:
+          defaultMode: 0640
+          name: filebeat-config #it is providing filebeat config,it is providing the filebeat config as the configmap for each pod.Now each pod will have this configuration file 
+      - name: varlibdockercontainers #it is related to host ip path volume,basically it will directly mounts directly from the host file system,it will directly mount directory from the host file system
+        hostPath:
+          path: /var/lib/docker/containers
+      - name: varlog #this also does same thing as above
+        hostPath:
+          path: /var/log
+      # data folder stores a registry of read status for all files, so we don't send everything again on a Filebeat pod restart
+      - name: data #storage for registry files
+        hostPath:
+          # When filebeat runs as non-root user, this directory needs to be writable by group (g+w).
+          path: /var/lib/filebeat-data
+          type: DirectoryOrCreate
+---
+apiVersion: rbac.authorization.k8s.io/v1 #rbac authorisation version(role based access control),this section is used to create a role based access control,we are creating a cluster role and attaching it to service account and it will help us basically filebeat has access to all the clusters,of our kubernatives cluster(every node at each pod)
+kind: ClusterRoleBinding #giving filebeat permissions across whole cluster
+metadata:
+  name: filebeat
+subjects:
+- kind: ServiceAccount #cluster role binding will get applied to the service account is inside the logging namespace
+  name: filebeat
+  namespace: logging
+roleRef:
+  kind: ClusterRole #it is basically connecting our service account to this particular cluster role for all the permissions.
+  name: filebeat
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding #granting extra permission inside logging namespace
+metadata:
+  name: filebeat
+  namespace: logging
+subjects:
+  - kind: ServiceAccount
+    name: filebeat
+    namespace: logging
+roleRef:
+  kind: Role #binding service account to the normal role
+  name: filebeat
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1 #Basically it is allowing your filebeat to read this kubeadm-config for your kubernatives cluster setup details,it is required when our cluster is being setup
+kind: RoleBinding
+metadata:
+  name: filebeat-kubeadm-config
+  namespace: logging
+subjects:
+  - kind: ServiceAccount
+    name: filebeat
+    namespace: logging
+roleRef:
+  kind: Role
+  name: filebeat-kubeadm-config
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole #this cluster role is for the global permisssions like overall permissions
+metadata:
+  name: filebeat
+  labels:
+    k8s-app: filebeat
+rules: #rules for global permission
+- apiGroups: [""] # "" indicates the core API group 
+  resources: #filebeat can monitor all the namespaces,pods,nodes
+  - namespaces
+  - pods
+  - nodes
+  verbs:
+  - get #it is basically allowing your filebeat to read
+  - watch #it is basically allowing your filebeat to watch for changes
+  - list #it can list all the namespaces ,ports and every node
+- apiGroups: ["apps"]
+  resources:
+    - replicasets
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role #for namespace permissions
+metadata:
+  name: filebeat
+  # should be the namespace where filebeat is running
+  namespace: logging
+  labels:
+    k8s-app: filebeat
+rules:
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs: ["get", "create", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role #for kubeadm ,it is a setup file so you can't make changes on it as default.
+metadata:
+  name: filebeat-kubeadm-config
+  namespace: logging
+  labels:
+    k8s-app: filebeat
+rules:
+  - apiGroups: [""]
+    resources:
+      - configmaps
+    resourceNames:
+      - kubeadm-config
+    verbs: ["get"]
+---
+apiVersion: v1
+kind: ServiceAccount #service account inside filebeat,logging
+metadata:
+  name: filebeat
+  namespace: logging
+  labels:
+    k8s-app: filebeat
+---
+
+#we have created three cluster all basically one cluster role and two normal roles.One role will have all the permissions related to the namespace,then another has kubeadm config is related to kubernatives setup.Each of these three roles are bounded using the service accounts using ClusterRole binding(of Service Account and Cluster Role)
+#Then we are binding the role for the namespace and our service account,then we are binding the role for kube adm and service account
+#So service account is binded by three things
+
+'''
+ServiceAccount+Cluster=Global Permission Cluster Role
+ServiceAccount+namespace Role
+ServiceAccount+kube ADM role
+'''
+
+#DaemonSet
+#When using filebeat with daemon set
+#It will install a filebeat pod at each node
+'''
+Kuberntes Cluster --> App1 App2 App3 Ser1 Ser2
+                      Pod1 Pod2 Pod3 Pod4 Pod5
+
+Pod 1 will all the logs from this app1 and then send to logstash,now pod2 will collect all the logs from this app2 and then send them to logstash,similarly for all.
+Daemon set allows it that you can install your filebeat at each node and then you can collect logs from that particular node of that cluster.
+'''
