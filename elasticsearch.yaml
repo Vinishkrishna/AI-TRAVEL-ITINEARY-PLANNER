@@ -33,7 +33,7 @@ spec:
             - name: discovery.type
               value: single-node #we are telling our elastic search to run in single node mode(as testing/development purpose so single node)
             - name: ES_JAVA_OPTS
-              value: "-Xms512m -Xmx512m -XX:-UseContainerSupport" #512 MB and maximum also 512MB,Xms-minimum & Xmx-maximum,we are setting memory allocation to java virtual machine
+              value: "-Xms512m -Xmx512m -XX:-UseContainerSupport -Des.cgroups.enabled=false" #512 MB and maximum also 512MB,Xms-minimum & Xmx-maximum,we are setting memory allocation to java virtual machine
             - name: xpack.security.enabled
               value: "false" #we are disabling the built-in security(so that u don't have to write the username & password),when doing for company set it to true
           ports:
