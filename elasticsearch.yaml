@@ -28,7 +28,7 @@ spec:
     spec:
       containers:
         - name: elasticsearch
-          image: docker.elastic.co/elasticsearch/elasticsearch:7.17.0 #this particular docker image is used to install the elastic search
+          image: docker.elastic.co/elasticsearch/elasticsearch:9.1.0 #this particular docker image is used to install the elastic search
           env:
             - name: discovery.type
               value: single-node #we are telling our elastic search to run in single node mode(as testing/development purpose so single node)
