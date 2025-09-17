@@ -34,3 +34,4 @@ spec:
   ports:
     - port: 5601
       nodePort: 30601 #it is the port which you can access via node IP(it will not be used but good to give)
+      
